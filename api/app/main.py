@@ -15,6 +15,7 @@ from app.config import settings
 from app.limiter import limiter
 from app.routers.chat import router as chat_router
 from app.routers.health import router as health_router
+import os
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
     logger.info("F1 API starting up — env=%s model=%s", settings.env, settings.openai_model)
     yield
     logger.info("F1 API shutting down.")

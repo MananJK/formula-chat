@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     embedding_model: str = Field("text-embedding-3-small", alias="EMBEDDING_MODEL")
     rag_top_k: int = Field(5, alias="RAG_TOP_K")
 
+    # Redis
+    redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
+
+    # FastF1
+    fastf1_cache_dir: str = Field(".fastf1_cache", alias="FASTF1_CACHE_DIR")
+
     # API
     api_host: str = Field("0.0.0.0", alias="API_HOST")
     api_port: int = Field(8000, alias="API_PORT")
