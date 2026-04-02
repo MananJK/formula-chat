@@ -2,6 +2,7 @@
 Chat router — POST /chat (non-streaming) and POST /chat/stream (SSE streaming).
 """
 
+import json
 import uuid
 import logging
 from typing import AsyncGenerator
@@ -10,9 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.agent import run_agent, stream_agent
-from app.limiter import limiter
 from app.models.schemas import ChatRequest, ChatResponse, StreamChunk
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,6 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 # ---------------------------------------------------------------------------
 
 @router.post("", response_model=ChatResponse)
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
 async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     """
     Send a message to the F1 agent and receive a complete answer.
@@ -49,7 +47,6 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
 # ---------------------------------------------------------------------------
 
 @router.post("/stream")
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
 async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
     """
     Stream the F1 agent's response as Server-Sent Events.

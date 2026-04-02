@@ -9,10 +9,20 @@ openai-agents==0.0.11
 
 # Database
 asyncpg==0.30.0
+sqlalchemy[asyncio]==2.0.36
 pgvector==0.3.6
+
+# Telemetry
+fastf1==3.5.3
+
+# Security / validation
+sqlglot==26.0.0
 
 # Rate limiting
 slowapi==0.1.9
+
+# Redis
+redis[hiredis]==5.2.1
 
 # HTTP
 httpx==0.28.1

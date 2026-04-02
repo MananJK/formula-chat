@@ -2,27 +2,40 @@
 F1 agent — built with the OpenAI Agents SDK.
 
 The agent is given:
-  - A system prompt describing available tools
-  - One tool: f1_knowledge (semantic search over F1 knowledge base)
-  - Autonomy to choose how to use the tool and combine results before
-    producing a final natural-language answer.
+  - A system prompt containing the full database schema and tool descriptions
+  - Two tools: sql_query, f1_knowledge
+  - Autonomy to choose which tool(s) to call, in what order, and how to
+    combine results before producing a final natural-language answer.
 """
 
 from agents import Agent, Runner, function_tool, RunConfig, RawResponsesStreamEvent, RunItemStreamEvent
 from agents.models.openai_responses import OpenAIResponsesModel
 
 from app.config import settings
+from app.tools.sql_query import sql_query, SCHEMA_DESCRIPTION
 from app.tools.f1_knowledge import f1_knowledge
 
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """
-You are an expert Formula One assistant with access to one data tool: f1_knowledge.
-Always use the tool to answer precisely and completely. Cite your sources where relevant.
+SYSTEM_PROMPT = f"""
+You are an expert Formula One assistant with access to three data tools.
+Always use the most appropriate tool (or combination of tools) to answer
+precisely and completely. Cite your sources where relevant.
 
 ## Tools
+
+### sql_query
+Runs a read-only SELECT query against a PostgreSQL database containing F1 data
+from 2018 through the current **2026 season** (imported via FastF1). Use this for:
+- Current 2026 championship standings and points
+- 2026 race results, grid positions, qualifying times
+- Driver career statistics (wins, poles, podiums) across all seasons
+- Constructor statistics and team comparisons
+- Lap times and pit stop data
+- Historical records, season comparisons, and trends
+- Always filter by `races.year` for season-specific queries
 
 ### f1_knowledge
 Performs a semantic search over a curated knowledge base of F1 content
@@ -33,9 +46,15 @@ Performs a semantic search over a curated knowledge base of F1 content
 - Circuit descriptions and characteristics
 
 ## Rules
-- Never fabricate data — if the tool returns no results, say so.
+- Only SELECT statements may be generated for sql_query.
+- Never fabricate data — if a tool returns no results, say so.
+- Combine tool outputs when questions span multiple domains.
 - Keep answers concise but complete.
 - Format numbers clearly (e.g. lap times as M:SS.mmm).
+
+## Database Schema
+
+{SCHEMA_DESCRIPTION}
 """.strip()
 
 
@@ -43,6 +62,7 @@ Performs a semantic search over a curated knowledge base of F1 content
 # Tool registration
 # ---------------------------------------------------------------------------
 
+_sql_tool = function_tool(sql_query)
 _knowledge_tool = function_tool(f1_knowledge)
 
 
@@ -59,7 +79,7 @@ def create_agent() -> Agent:
             model=settings.openai_model,
             openai_client=_openai_client(),
         ),
-        tools=[_knowledge_tool],
+        tools=[_sql_tool, _knowledge_tool],
     )
 
 
