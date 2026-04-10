@@ -1,0 +1,15 @@
+# Bootstrap config: HTTP only, used during initial Let's Encrypt cert issuance.
+# After certs are obtained, replace with app.conf and reload nginx.
+server {
+    listen 80;
+    server_name _;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 200 'OK';
+        add_header Content-Type text/plain;
+    }
+}

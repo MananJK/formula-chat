@@ -1,0 +1,101 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      VITE_AUTH0_DOMAIN: ${VITE_AUTH0_DOMAIN}
+      VITE_AUTH0_CLIENT_ID: ${VITE_AUTH0_CLIENT_ID}
+      VITE_AUTH0_AUDIENCE: ${VITE_AUTH0_AUDIENCE}
+    depends_on:
+      - api
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certbot/conf:/etc/letsencrypt:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - frontend
+      - api
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - ./nginx/certbot/conf:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+    # Initial cert issuance (run once after bootstrap deploy):
+    #   docker compose run --rm --entrypoint certbot certbot certonly --webroot \
+    #     --webroot-path /var/www/certbot \
+    #     --email you@example.com \
+    #     --agree-tos --no-eff-email \
+    #     -d f1-chat.tomshaw.trentvision.cloud
+    # Then swap in SSL config and reload:
+    #   cp nginx/conf.d/app.conf.ssl nginx/conf.d/app.conf
+    #   docker compose exec nginx nginx -s reload
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done"
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    # Port 8000 is not exposed publicly; nginx proxies to it internally
+    expose:
+      - "8000"
+    env_file:
+      - ./api/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    # Bind to localhost only — not exposed externally
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_DB: f1
+      POSTGRES_USER: f1_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command: >
+      postgres
+        -c shared_buffers=256MB
+        -c work_mem=16MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U f1_user -d f1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

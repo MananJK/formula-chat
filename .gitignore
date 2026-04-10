@@ -30,6 +30,6 @@ desktop.ini
 *.log
 logs/
 
-
-# FastF1 Cache
-.fastf1_cache
+# ── Nginx / Certbot ────────────────────────────────────────────────────────────
+nginx/certbot/conf/
+nginx/certbot/www/
