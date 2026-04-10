@@ -2,7 +2,7 @@
 # ssl-init.sh — One-time SSL certificate issuance for f1-chat.tomshaw.trentvision.cloud
 # Run this script from the repo root on the server after initial deploy.
 #
-# Usage: bash ssl-init.sh
+# Usage: bash ssl-init.sh <email>
 
 set -e
 
@@ -19,14 +19,19 @@ echo "==> Ensuring certbot directories exist..."
 mkdir -p nginx/certbot/www/.well-known/acme-challenge
 mkdir -p nginx/certbot/conf
 
-echo "==> Switching to bootstrap nginx config..."
-cp nginx/conf.d/app.conf.bootstrap nginx/conf.d/app.conf
+echo "==> Force-resetting app.conf to bootstrap config..."
+cp -f nginx/conf.d/app.conf.bootstrap nginx/conf.d/app.conf
 
 echo "==> Bringing up stack with bootstrap config..."
 docker compose up -d --force-recreate nginx
 
 echo "==> Waiting for nginx to be ready..."
-sleep 5
+until curl -sf http://localhost/.well-known/acme-challenge/ > /dev/null 2>&1 || \
+      curl -s http://localhost/ > /dev/null 2>&1; do
+  echo "    nginx not ready yet, waiting..."
+  sleep 2
+done
+echo "    nginx is ready."
 
 echo "==> Requesting certificate for $DOMAIN..."
 docker compose run --rm --entrypoint certbot certbot certonly \
@@ -38,7 +43,7 @@ docker compose run --rm --entrypoint certbot certbot certonly \
   -d "$DOMAIN"
 
 echo "==> Certificate issued. Switching to SSL config..."
-cp nginx/conf.d/app.conf.ssl nginx/conf.d/app.conf
+cp -f nginx/conf.d/app.conf.ssl nginx/conf.d/app.conf
 
 echo "==> Reloading nginx..."
 docker compose exec nginx nginx -s reload
