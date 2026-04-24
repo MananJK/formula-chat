@@ -17,6 +17,7 @@ from app.db import init_pool, close_pool
 from app.limiter import limiter
 from app.routers.chat import router as chat_router
 from app.routers.health import router as health_router
+from app.routers.metrics import router as metrics_router
 import os
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ app.add_middleware(
 # Routers
 app.include_router(health_router)
 app.include_router(chat_router, prefix="/api/v1")
+app.include_router(metrics_router, prefix="/api/v1")
 
 # ---------------------------------------------------------------------------
 # Global error handler

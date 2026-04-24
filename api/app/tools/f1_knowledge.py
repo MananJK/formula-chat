@@ -9,11 +9,18 @@ text-embedding-3-small.
 import hashlib
 import json
 import logging
+import time
 from typing import Any
 
 from app.config import settings
 from app.db import get_pool
 from app.cache import cache_get, cache_set
+from app.metrics import (
+    increment_embedding_cache_hit,
+    increment_embedding_cache_miss,
+    record_embedding_latency,
+    record_rag_search_latency,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +49,25 @@ async def f1_knowledge(query: str, top_k: int | None = None) -> dict[str, Any]:
               - score: cosine similarity score
           - result_count: number of results returned
     """
+    total_start = time.perf_counter()
     k = top_k or settings.rag_top_k
 
     cache_key = f"emb:{hashlib.sha256(query.encode()).hexdigest()}"
     cached_emb = await cache_get(cache_key)
+    emb_start = time.perf_counter()
+    
     if cached_emb:
+        await increment_embedding_cache_hit()
         embedding = cached_emb
     else:
+        await increment_embedding_cache_miss()
         embedding = await _embed(query)
         if embedding is None:
             return {"error": "Failed to generate query embedding.", "results": [], "result_count": 0}
         await cache_set(cache_key, embedding, settings.embedding_cache_ttl)
+    
+    emb_latency = (time.perf_counter() - emb_start) * 1000
+    await record_embedding_latency(emb_latency)
 
     try:
         pool = get_pool()
@@ -61,6 +76,7 @@ async def f1_knowledge(query: str, top_k: int | None = None) -> dict[str, Any]:
         return {"error": "Database pool not available.", "results": [], "result_count": 0}
 
     try:
+        search_start = time.perf_counter()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -72,11 +88,15 @@ async def f1_knowledge(query: str, top_k: int | None = None) -> dict[str, Any]:
                 str(embedding),
                 k,
             )
+        search_latency = (time.perf_counter() - search_start) * 1000
+        await record_rag_search_latency(search_latency)
+        
         results = [
             {"content": r["content"], "source": r["source"], "score": float(r["score"])}
             for r in rows
         ]
-        return {"results": results, "result_count": len(results)}
+        total_latency = (time.perf_counter() - total_start) * 1000
+        return {"results": results, "result_count": len(results), "latency_ms": total_latency}
     except Exception as exc:
         logger.error("RAG query error: %s", exc)
         return {"error": f"Knowledge base query failed: {exc}", "results": [], "result_count": 0}

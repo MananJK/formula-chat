@@ -10,6 +10,7 @@ executed with a 5-second timeout against a read-only database user.
 import asyncio
 import hashlib
 import logging
+import time
 from typing import Any
 
 import sqlglot
@@ -17,6 +18,12 @@ import sqlglot
 from app.config import settings
 from app.db import get_pool
 from app.cache import cache_get, cache_set
+from app.metrics import (
+    increment_sql_cache_hit,
+    increment_sql_cache_miss,
+    record_sql_latency,
+    increment_total_requests,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +101,8 @@ def _validate_sql(query: str) -> str:
 
 async def sql_query(query: str) -> dict[str, Any]:
     print('Using sql_query tool with query:', query)
+    start_time = time.perf_counter()
+    await increment_total_requests()
     """
     Execute a read-only SQL SELECT against the F1 PostgreSQL database (2018–2026).
 
@@ -115,7 +124,12 @@ async def sql_query(query: str) -> dict[str, Any]:
     cache_key = f"sql:{hashlib.sha256(validated.encode()).hexdigest()}"
     cached = await cache_get(cache_key)
     if cached:
+        await increment_sql_cache_hit()
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        await record_sql_latency(latency_ms)
         return cached
+
+    await increment_sql_cache_miss()
 
     try:
         pool = get_pool()
@@ -135,6 +149,9 @@ async def sql_query(query: str) -> dict[str, Any]:
 
         ttl = _determine_cache_ttl(validated)
         await cache_set(cache_key, result, ttl)
+
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        await record_sql_latency(latency_ms)
 
         return result
     except asyncio.TimeoutError:
