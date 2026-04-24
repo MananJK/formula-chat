@@ -6,10 +6,14 @@ documents, and race reports — scraped offline and embedded with
 text-embedding-3-small.
 """
 
+import hashlib
+import json
 import logging
 from typing import Any
 
 from app.config import settings
+from app.db import get_pool
+from app.cache import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 
@@ -38,32 +42,36 @@ async def f1_knowledge(query: str, top_k: int | None = None) -> dict[str, Any]:
               - score: cosine similarity score
           - result_count: number of results returned
     """
-    import asyncpg
-
     k = top_k or settings.rag_top_k
 
-    embedding = await _embed(query)
-    if embedding is None:
-        return {"error": "Failed to generate query embedding.", "results": [], "result_count": 0}
+    cache_key = f"emb:{hashlib.sha256(query.encode()).hexdigest()}"
+    cached_emb = await cache_get(cache_key)
+    if cached_emb:
+        embedding = cached_emb
+    else:
+        embedding = await _embed(query)
+        if embedding is None:
+            return {"error": "Failed to generate query embedding.", "results": [], "result_count": 0}
+        await cache_set(cache_key, embedding, settings.embedding_cache_ttl)
 
     try:
-        conn: asyncpg.Connection = await asyncpg.connect(settings.database_url)
-    except Exception as exc:
-        logger.error("DB connection error: %s", exc)
-        return {"error": "Failed to connect to knowledge base.", "results": [], "result_count": 0}
+        pool = get_pool()
+    except RuntimeError as exc:
+        logger.error("DB pool not available: %s", exc)
+        return {"error": "Database pool not available.", "results": [], "result_count": 0}
 
     try:
-        # pgvector cosine distance operator: <=>
-        rows = await conn.fetch(
-            """
-            SELECT content, source, 1 - (embedding <=> $1::vector) AS score
-            FROM f1_knowledge
-            ORDER BY embedding <=> $1::vector
-            LIMIT $2
-            """,
-            str(embedding),
-            k,
-        )
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT content, source, 1 - (embedding <=> $1::vector) AS score
+                FROM f1_knowledge
+                ORDER BY embedding <=> $1::vector
+                LIMIT $2
+                """,
+                str(embedding),
+                k,
+            )
         results = [
             {"content": r["content"], "source": r["source"], "score": float(r["score"])}
             for r in rows
@@ -72,8 +80,6 @@ async def f1_knowledge(query: str, top_k: int | None = None) -> dict[str, Any]:
     except Exception as exc:
         logger.error("RAG query error: %s", exc)
         return {"error": f"Knowledge base query failed: {exc}", "results": [], "result_count": 0}
-    finally:
-        await conn.close()
 
 
 async def _embed(text: str) -> list[float] | None:
