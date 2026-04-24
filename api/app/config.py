@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
 
+    # Cache TTLs (in seconds)
+    sql_cache_ttl: int = Field(60, alias="SQL_CACHE_TTL")
+    embedding_cache_ttl: int = Field(86400, alias="EMBEDDING_CACHE_TTL")
+
     # FastF1
     fastf1_cache_dir: str = Field(".fastf1_cache", alias="FASTF1_CACHE_DIR")
 
