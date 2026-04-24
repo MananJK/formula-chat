@@ -12,6 +12,8 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
+from app.cache import init_redis, close_redis
+from app.db import init_pool, close_pool
 from app.limiter import limiter
 from app.routers.chat import router as chat_router
 from app.routers.health import router as health_router
@@ -35,8 +37,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(settings.fastf1_cache_dir, exist_ok=True)
+    await init_redis()
+    await init_pool()
     logger.info("F1 API starting up — env=%s model=%s", settings.env, settings.openai_model)
     yield
+    await close_pool()
+    await close_redis()
     logger.info("F1 API shutting down.")
 
 
