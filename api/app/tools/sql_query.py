@@ -8,13 +8,15 @@ executed with a 5-second timeout against a read-only database user.
 """
 
 import asyncio
+import hashlib
 import logging
 from typing import Any
 
 import sqlglot
-import asyncpg
 
 from app.config import settings
+from app.db import get_pool
+from app.cache import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 
@@ -110,29 +112,44 @@ async def sql_query(query: str) -> dict[str, Any]:
     except ValueError as exc:
         return {"error": str(exc), "rows": [], "row_count": 0, "columns": []}
 
-    try:
-        conn: asyncpg.Connection = await asyncio.wait_for(
-            asyncpg.connect(settings.database_url),
-            timeout=settings.database_query_timeout,
-        )
-    except asyncio.TimeoutError:
-        return {"error": "Database connection timed out.", "rows": [], "row_count": 0, "columns": []}
-    except Exception as exc:
-        logger.error("DB connection error: %s", exc)
-        return {"error": "Failed to connect to database.", "rows": [], "row_count": 0, "columns": []}
+    cache_key = f"sql:{hashlib.sha256(validated.encode()).hexdigest()}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
 
     try:
-        records = await asyncio.wait_for(
-            conn.fetch(validated),
-            timeout=settings.database_query_timeout,
-        )
+        pool = get_pool()
+    except RuntimeError as exc:
+        logger.error("DB pool not available: %s", exc)
+        return {"error": "Database pool not available.", "rows": [], "row_count": 0, "columns": []}
+
+    try:
+        async with pool.acquire() as conn:
+            records = await asyncio.wait_for(
+                conn.fetch(validated),
+                timeout=settings.database_query_timeout,
+            )
         columns = list(records[0].keys()) if records else []
         rows = [dict(r) for r in records]
-        return {"rows": rows, "row_count": len(rows), "columns": columns}
+        result = {"rows": rows, "row_count": len(rows), "columns": columns}
+
+        ttl = _determine_cache_ttl(validated)
+        await cache_set(cache_key, result, ttl)
+
+        return result
     except asyncio.TimeoutError:
         return {"error": "Query timed out (5s limit).", "rows": [], "row_count": 0, "columns": []}
     except Exception as exc:
         logger.error("Query execution error: %s", exc)
         return {"error": f"Query error: {exc}", "rows": [], "row_count": 0, "columns": []}
-    finally:
-        await conn.close()
+
+
+def _determine_cache_ttl(query: str) -> int:
+    query_lower = query.lower()
+    if "standings" in query_lower or "championship" in query_lower:
+        return 300
+    elif "races.year" in query_lower or "round" in query_lower:
+        return 3600
+    elif "current" in query_lower:
+        return 60
+    return settings.sql_cache_ttl
